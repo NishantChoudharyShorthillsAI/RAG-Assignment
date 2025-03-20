@@ -1,107 +1,120 @@
-"""Generate Answers using Gemini AI
-
-This script loads DevOps-related questions from a JSON file and generates answers
-using the Gemini 1.5 Flash model. The answers are saved to an output JSON file.
-
-"""
-
-import json
 import os
-import time
+import json
+import PyPDF2
+import streamlit as st
 import google.generativeai as genai
 from dotenv import load_dotenv
+
+# ✅ Set page configuration FIRST (before any Streamlit commands)
+st.set_page_config(layout="wide")
 
 # Load API key from .env file
 load_dotenv()
 api_key = os.getenv("GOOGLE_API_KEY")
 
 if not api_key:
-    raise ValueError("GOOGLE_API_KEY is not set. Please check your .env file.")
+    st.error("GOOGLE_API_KEY is not set. Please check your .env file.")
+    st.stop()
 
-# Configure the Gemini AI model
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel("gemini-1.5-flash")
 
-# Paths to files
-INPUT_JSON_FILE = "devops_qa_complete.json"  # JSON file containing {"question": "...", "answer": "..."}
-EXTRACTED_TEXT_FILE = "./Scrapping/extracted_devops_text.txt"
-OUTPUT_FILE = "generated_answers.json"
+DEFAULT_TEXT_FILE = "./Scrapping/extracted_devops_text.txt"
+CHAT_HISTORY_FILE = "generated_answer.json"
 
-def load_extracted_text():
-    """Loads extracted text from the default file (context for generation)."""
-    if os.path.exists(EXTRACTED_TEXT_FILE):
-        with open(EXTRACTED_TEXT_FILE, "r", encoding="utf-8") as file:
-            return file.read()
-    return ""
 
-def load_questions_one_by_one():
-    """Loads questions one by one from a JSON file using a generator (memory-efficient)."""
-    try:
-        with open(INPUT_JSON_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
-            for item in data:
-                if "question" in item:
-                    yield item["question"]  # Yield one question at a time
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"Error loading questions: {e}")
-        return
+def extract_text_from_pdf(pdf_file):
+    """Extract text content from an uploaded PDF file.
 
-def generate_answer(question, context):
-    """Generates an answer for a single question using Gemini AI.
-    
     Args:
-        question (str): The question to be answered.
-        context (str): Extracted text providing additional information.
-    
+        pdf_file (BytesIO): A file-like object containing the uploaded PDF.
+
     Returns:
-        str: Generated answer or an error message.
+        str: Extracted text from the PDF.
     """
-    print(f"Processing: {question}")
-    try:
-        response = model.generate_content(f"Context: {context}\n\nQuestion: {question}\n\nAnswer:")
-        return response.text.strip() if response.text else "No answer generated"
-    except Exception as e:
-        return f"Error generating response: {e}"
+    extracted_text = ""
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
+    for page in pdf_reader.pages:
+        extracted_text += page.extract_text() + "\n"
+    return extracted_text
 
-def save_answer(question, answer):
-    """Appends a generated answer to the output JSON file.
-    
-    Args:
-        question (str): The input question.
-        answer (str): The generated answer.
+
+def load_chat_history():
+    """Load chat history from a JSON file.
+
+    Returns:
+        list: A list of dictionaries containing question-answer pairs.
     """
-    result = {"question": question, "answer": answer}
-
-    if os.path.exists(OUTPUT_FILE):
-        with open(OUTPUT_FILE, "r", encoding="utf-8") as file:
+    if os.path.exists(CHAT_HISTORY_FILE):
+        with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as file:
             try:
-                results = json.load(file)
-                if not isinstance(results, list):
-                    results = []
+                return json.load(file)
             except json.JSONDecodeError:
-                results = []
+                return []
+    return []
+
+
+def save_chat_history(chat_history):
+    """Save chat history to a JSON file.
+
+    Args:
+        chat_history (list): A list of dictionaries containing question-answer pairs.
+    """
+    with open(CHAT_HISTORY_FILE, "w", encoding="utf-8") as file:
+        json.dump(chat_history, file, indent=4)
+
+
+# Initialize session state variables
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = load_chat_history()
+
+if "extracted_text" not in st.session_state:
+    if os.path.exists(DEFAULT_TEXT_FILE):
+        with open(DEFAULT_TEXT_FILE, "r", encoding="utf-8") as file:
+            st.session_state.extracted_text = file.read()
     else:
-        results = []
+        st.session_state.extracted_text = ""
 
-    results.append(result)
+# Streamlit UI layout
+st.title("🔍 DevOps RAG Chatbot")
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as file:
-        json.dump(results, file, indent=4)
-    
-    print(f"✅ Saved: {question}")
+col1, col2 = st.columns([1, 2])
 
-def main():
-    """Main function to generate answers for all questions."""
-    context = load_extracted_text()
-    if not context:
-        print("No extracted text found.")
-        return
+with col1:
+    st.subheader("📝 Chat History")
+    if st.session_state.chat_history:
+        for qa in reversed(st.session_state.chat_history):
+            with st.expander(f"❓ {qa['question']}"):
+                st.markdown(f"**Answer:** {qa['answer']}")
+    else:
+        st.info("No questions asked yet.")
 
-    for question in load_questions_one_by_one():
-        answer = generate_answer(question, context)
-        save_answer(question, answer)
-        print("⏳ Waiting 30 seconds before the next request...")
-        time.sleep(30)
+with col2:
+    st.subheader("📂 Upload or Use Default PDF")
+    uploaded_file = st.file_uploader("Upload a PDF File", type=["pdf"])
 
-if __name__ == "__main__":
-    main()
+    if uploaded_file:
+        with st.spinner("Extracting text from uploaded PDF..."):
+            extracted_text = extract_text_from_pdf(uploaded_file)
+            st.session_state.extracted_text = extracted_text
+    elif not st.session_state.extracted_text:
+        st.warning("No PDF uploaded and no default file found!")
+
+    with st.expander("📖 View Extracted Content"):
+        st.text_area("Extracted Text", st.session_state.extracted_text, height=300)
+
+    query = st.text_input("❓ Ask a question:")
+
+    if st.button("Get Answer") and query:
+        with st.spinner("Generating answer..."):
+            response = model.generate_content(
+                f"Context: {st.session_state.extracted_text}\n\nQuestion: {query}\n\nAnswer:"
+            )
+            answer = response.text.strip()
+
+            qa_pair = {"question": query, "answer": answer}
+            st.session_state.chat_history.append(qa_pair)
+            save_chat_history(st.session_state.chat_history)
+
+            st.success("✅ Answer Generated!")
+            st.markdown(f"**Answer:** {answer}")
