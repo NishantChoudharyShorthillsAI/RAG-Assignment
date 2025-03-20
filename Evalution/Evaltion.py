@@ -5,9 +5,9 @@ from sentence_transformers import SentenceTransformer, util
 from rouge import Rouge
 
 # Paths to files
-GOLDEN_SET_FILE = "devops_qa_complete.json"  # File with {"question": "...", "answer": "..."}
-GENERATED_RESPONSES_FILE = "generated_answers.json"  # File with {"question": "...", "answer": "..."}
-OUTPUT_EXCEL_FILE = "evaluation_results.xlsx"
+GOLDEN_SET_FILE = "../devops_qa_complete.json"  # File with {"question": "...", "answer": "..."}
+GENERATED_RESPONSES_FILE = "../generated_answers.json"  # File with {"question": "...", "answer": "..."}
+OUTPUT_EXCEL_FILE = "../evaluation_results.xlsx"
 OUTPUT_CSV_FILE = "evaluation_results.csv"
 
 # Load models
